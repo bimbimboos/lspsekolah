@@ -1,4 +1,5 @@
 <?php
+ob_start();
 session_start();
 include "template/header.php";
 include "template/menu.php";
@@ -25,13 +26,13 @@ function set_flash($type, $msg) {
 
 /* ============================================================
    AMBIL DATA ADMIN YANG SEDANG LOGIN
-   Asumsi: ID admin disimpan di $_SESSION['id_admin']
+   Asumsi: ID admin disimpan di $_SESSION['id_users']
    Jika kamu pakai nama session yang berbeda, sesuaikan di sini.
    ============================================================ */
-$id_admin = isset($_SESSION['id_admin']) ? (int)$_SESSION['id_admin'] : 1; // fallback ke 1 untuk demo
-$admin    = mysqli_fetch_assoc(mysqli_query($koneksi, "SELECT * FROM admin WHERE id=$id_admin"));
+$id_users = isset($_SESSION['id_users']) ? (int)$_SESSION['id_users'] : 1; // fallback ke 1 untuk demo
+$users    = mysqli_fetch_assoc(mysqli_query($koneksi, "SELECT * FROM users WHERE id=$id_users"));
 
-if (!$admin) {
+if (!$users) {
     die('<p style="font-family:sans-serif;padding:40px;">Data admin tidak ditemukan.</p>');
 }
 
@@ -51,14 +52,15 @@ if (isset($_POST['edit_profil'])) {
 
     // Cek apakah username sudah dipakai admin lain
     $cek = mysqli_fetch_assoc(mysqli_query($koneksi,
-        "SELECT id FROM admin WHERE username='$username' AND id != $id_admin"));
+        "SELECT id FROM users
+       WHERE username='$username' AND id != $id_users"));
     if ($cek) {
         set_flash('danger', 'Username sudah digunakan oleh admin lain.');
         header("Location: hal_profil.php"); exit;
     }
 
     mysqli_query($koneksi,
-        "UPDATE admin SET nama_admin='$nama_admin', username='$username' WHERE id=$id_admin");
+        "UPDATE admin SET nama_admin='$nama_admin', username='$username' WHERE id=$id_users");
 
     // Update session jika kamu menyimpan nama di sesi
     $_SESSION['nama_admin'] = $nama_admin;
@@ -78,32 +80,40 @@ if (isset($_POST['ganti_password'])) {
     $pass_baru  = $_POST['pass_baru'];
     $pass_ulang = $_POST['pass_ulang'];
 
-    // Cek password lama
-    // Jika passwordmu pakai MD5: ganti password_verify dengan: md5($pass_lama) === $admin['password']
-    $pass_cocok = (md5($pass_lama) === $admin['password'])
-                  || ($pass_lama === $admin['password']); // fallback plaintext
+    // Ambil data fresh dari DB (bukan dari variable $users yang mungkin stale)
+    $row = mysqli_fetch_assoc(mysqli_query($koneksi, 
+        "SELECT password FROM users WHERE id=$id_users"));
 
-    if (!$pass_cocok) {
-        set_flash('danger', 'Password lama tidak sesuai.');
+    if (
+        password_verify($pass_lama, $row['password']) ||
+        md5($pass_lama) === $row['password'] ||
+        $pass_lama === $row['password']
+    ) {
+        if ($pass_baru !== $pass_ulang) {
+            set_flash('danger', 'Konfirmasi password tidak sama.');
+            header("Location: hal_profil.php"); exit; // ✅ pakai flash + redirect
+        }
+
+        if (strlen($pass_baru) < 6) {
+            set_flash('danger', 'Password minimal 6 karakter.');
+            header("Location: hal_profil.php"); exit;
+        }
+
+        $hash = password_hash($pass_baru, PASSWORD_DEFAULT);
+
+        // ✅ Pastikan update ke tabel yang benar
+        mysqli_query($koneksi, "UPDATE users SET password='$hash' WHERE id=$id_users");
+
+        // ✅ Jangan echo dulu, langsung redirect
+        set_flash('success', 'Password berhasil diganti. Silakan login ulang.');
+        session_destroy(); // Recommended: paksa login ulang
+        header("Location: ../index.php"); exit;
+
+    } else {
+        set_flash('danger', 'Password lama salah.');
         header("Location: hal_profil.php"); exit;
     }
-    if (strlen($pass_baru) < 6) {
-        set_flash('danger', 'Password baru minimal 6 karakter.');
-        header("Location: hal_profil.php"); exit;
-    }
-    if ($pass_baru !== $pass_ulang) {
-        set_flash('danger', 'Konfirmasi password tidak cocok.');
-        header("Location: hal_profil.php"); exit;
-    }
-
-    // Simpan dengan MD5 (sesuaikan jika kamu pakai metode lain)
-    $pass_hash = md5($pass_baru);
-    mysqli_query($koneksi, "UPDATE admin SET password='$pass_hash' WHERE id=$id_admin");
-
-    set_flash('success', 'Password berhasil diubah. Silakan login ulang.');
-    header("Location: hal_profil.php"); exit;
 }
-
 /* ============================================================
    PROSES UPLOAD FOTO PROFIL
    ============================================================ */
@@ -142,33 +152,33 @@ if (isset($_POST['upload_foto'])) {
     if (!is_dir($folder)) mkdir($folder, 0755, true);
 
     // Hapus foto lama jika ada
-    if (!empty($admin['foto']) && file_exists($folder . $admin['foto'])) {
-        unlink($folder . $admin['foto']);
+    if (!empty($users['foto']) && file_exists($folder . $users['foto'])) {
+        unlink($folder . $users['foto']);
     }
 
-    $nama_file = 'admin_' . $id_admin . '_' . time() . '.' . $ext;
+    $nama_file = 'admin_' . $id_users . '_' . time() . '.' . $ext;
     move_uploaded_file($file['tmp_name'], $folder . $nama_file);
 
     $nama_file_db = mysqli_real_escape_string($koneksi, $nama_file);
-    mysqli_query($koneksi, "UPDATE admin SET foto='$nama_file_db' WHERE id=$id_admin");
+    mysqli_query($koneksi, "UPDATE admin SET foto='$nama_file_db' WHERE id=$id_users");
 
     set_flash('success', 'Foto profil berhasil diperbarui.');
     header("Location: hal_profil.php"); exit;
 }
 
 /* Refresh data setelah kemungkinan update */
-$admin = mysqli_fetch_assoc(mysqli_query($koneksi, "SELECT * FROM admin WHERE id=$id_admin"));
+$users = mysqli_fetch_assoc(mysqli_query($koneksi, "SELECT * FROM users WHERE id=$id_users"));
 
 /* Flash message */
 $flash = isset($_SESSION['flash']) ? $_SESSION['flash'] : null;
 unset($_SESSION['flash']);
 
 /* Inisial nama untuk avatar fallback */
-$inisial = strtoupper(substr($admin['nama_admin'] ?? $admin['username'], 0, 2));
+$inisial = strtoupper(substr($users['nama_admin'] ?? $users['username'], 0, 2));
 
 /* Path foto */
-$foto_path = (!empty($admin['foto']) && file_exists('../uploads/foto_admin/' . $admin['foto']))
-    ? '../uploads/foto_admin/' . $admin['foto']
+$foto_path = (!empty($users['foto']) && file_exists('../uploads/foto_admin/' . $users['foto']))
+    ? '../uploads/foto_admin/' . $users['foto']
     : null;
 ?>
 
@@ -507,7 +517,7 @@ $foto_path = (!empty($admin['foto']) && file_exists('../uploads/foto_admin/' . $
               <i class="bi bi-camera-fill"></i>
             </button>
           </div>
-          <div style="font-size:17px;font-weight:700;color:#fff;"><?= htmlspecialchars($admin['nama_admin'] ?? $admin['username']) ?></div>
+          <div style="font-size:17px;font-weight:700;color:#fff;"><?= htmlspecialchars($users['nama_admin'] ?? $users['username']) ?></div>
           <div style="margin-top:6px;"><span class="badge-role" style="background:rgba(255,255,255,.2);color:#fff;border-color:rgba(255,255,255,.3);">Administrator</span></div>
         </div>
 
@@ -515,15 +525,15 @@ $foto_path = (!empty($admin['foto']) && file_exists('../uploads/foto_admin/' . $
           <ul class="info-list">
             <li>
               <span class="lbl">ID Admin</span>
-              <span class="val" style="font-family:monospace;font-size:13px;">#<?= str_pad($admin['id'], 4, '0', STR_PAD_LEFT) ?></span>
+              <span class="val" style="font-family:monospace;font-size:13px;">#<?= str_pad($users['id'], 4, '0', STR_PAD_LEFT) ?></span>
             </li>
             <li>
               <span class="lbl">Username</span>
-              <span class="val">@<?= htmlspecialchars($admin['username']) ?></span>
+              <span class="val">@<?= htmlspecialchars($users['username']) ?></span>
             </li>
             <li>
               <span class="lbl">Nama Lengkap</span>
-              <span class="val"><?= htmlspecialchars($admin['nama_admin'] ?? '-') ?></span>
+              <span class="val"><?= htmlspecialchars($users['nama_admin'] ?? '-') ?></span>
             </li>
             <li>
               <span class="lbl">Role</span>
@@ -556,7 +566,7 @@ $foto_path = (!empty($admin['foto']) && file_exists('../uploads/foto_admin/' . $
               <div>
                 <label class="form-label-custom">Nama Lengkap</label>
                 <input type="text" name="nama_admin" class="form-control-custom"
-                  value="<?= htmlspecialchars($admin['nama_admin'] ?? '') ?>"
+                  value="<?= htmlspecialchars($users['nama_admin'] ?? '') ?>"
                   placeholder="Masukkan nama lengkap" required maxlength="100">
               </div>
               <div>
@@ -564,7 +574,7 @@ $foto_path = (!empty($admin['foto']) && file_exists('../uploads/foto_admin/' . $
                 <div style="position:relative;">
                   <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;">@</span>
                   <input type="text" name="username" class="form-control-custom" style="padding-left:28px;"
-                    value="<?= htmlspecialchars($admin['username']) ?>"
+                    value="<?= htmlspecialchars($users['username']) ?>"
                     placeholder="username" required maxlength="50">
                 </div>
               </div>

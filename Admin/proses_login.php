@@ -5,26 +5,27 @@ include '../koneksi.php';
 $username = mysqli_real_escape_string($koneksi, $_POST['username']);
 $password = mysqli_real_escape_string($koneksi, $_POST['password']);
 
-// 🔥 ambil data user
+// Ambil data user dari tabel users
 $data = mysqli_query($koneksi, "SELECT * FROM users WHERE username='$username'");
 $user = mysqli_fetch_assoc($data);
 
 if ($user) {
-
-    // ⚠️ kalau masih pakai plaintext (seperti kode kamu sekarang)
+    // Cek password (plaintext — sesuai sistem yang sudah ada)
     if ($password == $user['password']) {
 
-        // 🔥 SIMPAN SESSION (WAJIB)
-        $_SESSION['id_admin'] = $user['id'];
+        // Simpan session
+        $_SESSION['id_user']  = $user['id'];
+        $_SESSION['id_admin'] = $user['id']; // untuk kompatibilitas hal_profil.php
         $_SESSION['username'] = $user['username'];
-        $_SESSION['role']     = $user['role']; // 🔥 INI KUNCI ROLE
-        $_SESSION['status']   = "login";
+        $_SESSION['role']     = $user['role'];
+        $_SESSION['status']   = 'login';
 
-        // 🔥 redirect sesuai role
+        // Redirect sesuai role
         if ($user['role'] == 'admin') {
             header("Location: hal_admin.php");
         } else {
-            header("Location: index.php"); // atau halaman user
+            // Semua role selain admin → halaman user
+            header("Location: hal_user.php");
         }
         exit;
 
